@@ -1,16 +1,69 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 
 const MM_TO_DOT = 8
+const STORAGE_KEY = 'label-editor:canvas:v1'
+
+// 持久化时只保留画布数据与元件（含图片 data URL），选择态等临时状态不保存
+function loadPersistedState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return null
+    const data = JSON.parse(raw)
+    if (!data || !Array.isArray(data.elements)) return null
+    if (typeof data.canvasWidth !== 'number' || typeof data.canvasHeight !== 'number') return null
+    // 校验元件基本字段，丢弃损坏的记录，避免恢复后渲染/导出异常
+    data.elements = data.elements.filter(el =>
+      el && typeof el.id === 'string' && typeof el.type === 'string'
+      && typeof el.x === 'number' && typeof el.y === 'number'
+      && typeof el.width === 'number' && typeof el.height === 'number'
+    )
+    return data
+  } catch (err) {
+    console.warn('读取本地保存的画布失败：', err)
+    return null
+  }
+}
+
+const persisted = loadPersistedState()
 
 export const useCanvasStore = defineStore('canvas', () => {
-  const canvasWidth = ref(80)
-  const canvasHeight = ref(60)
+  const canvasWidth = ref(persisted?.canvasWidth ?? 80)
+  const canvasHeight = ref(persisted?.canvasHeight ?? 60)
   const scale = ref(1)
-  const elements = ref([])
+  const elements = ref(persisted?.elements ?? [])
   const selectedElementId = ref(null)
   const selectedElementIds = ref([])
-  let elementIdCounter = 0
+  // 重新进入页面后自增 id 不与已有元件冲突
+  let elementIdCounter = elements.value.reduce((max, el) => {
+    const match = /^element_(\d+)$/.exec(el.id || '')
+    return match ? Math.max(max, Number(match[1])) : max
+  }, 0)
+
+  let saveTimer = null
+  let quotaWarned = false
+  const persist = () => {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          canvasWidth: canvasWidth.value,
+          canvasHeight: canvasHeight.value,
+          elements: elements.value
+        }))
+        quotaWarned = false
+      } catch (err) {
+        // 图片 data URL 体积较大，超出本地存储容量时需向用户说明
+        if (!quotaWarned) {
+          quotaWarned = true
+          ElMessage.warning('图片较多或体积较大，超出浏览器本地存储容量，本次更改可能无法在重新进入页面后保留')
+        }
+      }
+    }, 300)
+  }
+
+  watch([canvasWidth, canvasHeight, elements], persist, { deep: true })
 
   const canvasPixelWidth = computed(() => canvasWidth.value * MM_TO_DOT)
   const canvasPixelHeight = computed(() => canvasHeight.value * MM_TO_DOT)

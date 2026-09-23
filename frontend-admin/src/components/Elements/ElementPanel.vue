@@ -41,6 +41,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useCanvasStore } from '@/stores/canvas'
+import { SAMPLE_IMAGE_DATA_URL, SAMPLE_IMAGE_NAME, SAMPLE_IMAGE_WIDTH, SAMPLE_IMAGE_HEIGHT } from '@/utils/image'
 
 const store = useCanvasStore()
 
@@ -49,7 +50,14 @@ const elementTypes = [
   { type: 'rect', label: '矩形', icon: 'FullScreen', defaultProps: { fillColor: '#ffffff', strokeColor: '#000000', strokeWidth: 1 } },
   { type: 'circle', label: '圆形', icon: 'CircleCheck', defaultProps: { fillColor: '#ffffff', strokeColor: '#000000', strokeWidth: 1 } },
   { type: 'line', label: '线条', icon: 'Minus', defaultProps: { strokeColor: '#000000', strokeWidth: 2 } },
-  { type: 'image', label: '图片', icon: 'Picture', defaultProps: { src: 'https://picsum.photos/100/100' } },
+  // 创建、展示、导出统一使用 imageData/imageName 等字段，拖入即显示内置示例图
+  { type: 'image', label: '图片', icon: 'Picture', defaultProps: {
+    imageData: SAMPLE_IMAGE_DATA_URL,
+    imageName: SAMPLE_IMAGE_NAME,
+    imageSize: SAMPLE_IMAGE_DATA_URL.length,
+    imageWidth: SAMPLE_IMAGE_WIDTH,
+    imageHeight: SAMPLE_IMAGE_HEIGHT
+  } },
   { type: 'barcode', label: '条码', icon: 'Postcard', defaultProps: { content: '123456789', format: 'CODE128', showText: true } },
   { type: 'qrcode', label: '二维码', icon: 'Grid', defaultProps: { content: 'https://example.com', errorLevel: 'M' } },
   { type: 'table', label: '表格', icon: 'Grid', defaultProps: { rows: 3, cols: 3, borderWidth: 1, borderColor: '#000000', cellFontSize: 12, cellFontFamily: 'Arial', cellFontColor: '#000000', cellTextAlign: 'center', cells: {} } }
@@ -68,7 +76,9 @@ const toggleVisibility = (el) => store.updateElement(el.id, { visible: !el.visib
 
 const getElementIcon = (type) => elementTypes.find(e => e.type === type)?.icon || 'Document'
 const getElementName = (el) => {
-  const names = { text: '文本', rect: '矩形', circle: '圆形', line: '线条', image: '图片', barcode: '条码', qrcode: '二维码', table: '表格' }
+  // 图片元件显示图片名称，与属性面板预览的名称保持一致
+  if (el.type === 'image' && el.imageName) return el.imageName
+  const names = { text: '文本', rect: '矩形', circle: '圆形', line: '线条', image: '图片（未设置）', barcode: '条码', qrcode: '二维码', table: '表格' }
   return names[el.type] || el.type
 }
 </script>

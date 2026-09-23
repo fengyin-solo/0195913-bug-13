@@ -42,7 +42,8 @@ import QrcodeElement from './elements/QrcodeElement.vue'
 import TableElement from './elements/TableElement.vue'
 import JsBarcode from 'jsbarcode'
 import QRCode from 'qrcode'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { loadImageElement, containDraw } from '@/utils/image'
 
 const store = useCanvasStore()
 const canvasRef = ref(null)
@@ -211,23 +212,28 @@ const handleDrop = (e) => {
 const renderCanvas = async () => {
   await nextTick()
   const canvas = canvasRef.value
-  if (!canvas) return
+  if (!canvas) return { failedImages: [] }
   const ctx = canvas.getContext('2d')
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
-  
+
+  // 收集加载失败 / 未加载完整的图片，导出后向用户交代清楚
+  const failedImages = []
+
   for (const el of store.elements) {
     if (!el.visible) continue
     ctx.save()
     ctx.translate(el.x + el.width / 2, el.y + el.height / 2)
     if (el.rotation) ctx.rotate((el.rotation * Math.PI) / 180)
     ctx.translate(-el.width / 2, -el.height / 2)
-    await renderElement(ctx, el)
+    await renderElement(ctx, el, failedImages)
     ctx.restore()
   }
+
+  return { failedImages }
 }
 
-const renderElement = async (ctx, el) => {
+const renderElement = async (ctx, el, failedImages = []) => {
   switch (el.type) {
     case 'text':
       ctx.fillStyle = el.color || '#000'
@@ -249,13 +255,23 @@ const renderElement = async (ctx, el) => {
       ctx.beginPath(); ctx.moveTo(0, el.height / 2); ctx.lineTo(el.width, el.height / 2)
       ctx.strokeStyle = el.strokeColor || '#000'; ctx.lineWidth = el.strokeWidth || 2; ctx.stroke()
       break
-    case 'image':
-      if (el.imageData) {
-        const img = new Image(); img.src = el.imageData
-        await new Promise(r => { img.onload = r; img.onerror = r })
-        ctx.drawImage(img, 0, 0, el.width, el.height)
+    case 'image': {
+      // 与创建/展示同一字段（imageData）、同一口径（contain 等比居中，不拉伸）
+      if (!el.imageData) {
+        if (failedImages && !failedImages.some(item => item.id === el.id)) {
+          failedImages.push({ id: el.id, name: el.imageName || '未命名图片', reason: '图片未设置' })
+        }
+        break
+      }
+      try {
+        // 必须等图片完整解码后再绘制；失败、超时、尺寸异常都会被拒绝
+        const img = await loadImageElement(el.imageData)
+        containDraw(ctx, img, el.width, el.height)
+      } catch (err) {
+        failedImages.push({ id: el.id, name: el.imageName || '未命名图片', reason: err?.message || '图片加载失败' })
       }
       break
+    }
     case 'barcode':
       try {
         const bcCanvas = document.createElement('canvas')
@@ -356,17 +372,28 @@ const exportToBMP = (canvas, filename = 'label.bmp') => {
 }
 
 const exportCanvas = async (type) => {
-  await renderCanvas()
+  const { failedImages = [] } = (await renderCanvas()) || {}
   const canvas = canvasRef.value
+
+  if (failedImages.length > 0) {
+    // 加载慢、格式异常或未加载完整的图片无法导出，逐条向用户交代原因
+    const detail = failedImages.map(item => `• ${item.name}：${item.reason}`).join('\n')
+    ElMessageBox.alert(
+      `以下 ${failedImages.length} 张图片未能正常导出（对应位置为空白）：\n${detail}\n\n请检查图片格式是否受支持、文件是否完整，重新选择后再导出。`,
+      '部分图片导出异常',
+      { type: 'warning', confirmButtonText: '我知道了' }
+    ).catch(() => {})
+  }
+
   if (type === 'bmp') {
     exportToBMP(canvas, 'label.bmp')
-    ElMessage.success('BMP 导出成功')
+    ElMessage.success(failedImages.length ? 'BMP 已导出（部分图片缺失，详见提示）' : 'BMP 导出成功')
   } else {
     const link = document.createElement('a')
     link.href = canvas.toDataURL('image/png')
     link.download = 'label.png'
     link.click()
-    ElMessage.success('PNG 导出成功')
+    ElMessage.success(failedImages.length ? 'PNG 已导出（部分图片缺失，详见提示）' : 'PNG 导出成功')
   }
 }
 

@@ -76,13 +76,20 @@
         <div v-if="element.type === 'image'" class="property-group">
           <div class="group-title">图片属性</div>
           <el-form-item label="图片">
-            <el-upload action="#" :auto-upload="false" :show-file-list="false" accept="image/*" @change="handleImageUpload">
-              <el-button type="primary" size="small">选择图片</el-button>
-            </el-upload>
+            <el-button type="primary" size="small" :loading="imageLoading" @click="triggerPick">
+              {{ element.imageData ? '更换图片' : '选择图片' }}
+            </el-button>
           </el-form-item>
+          <!-- 预览与名称：名称与左侧图层列表保持一致 -->
           <div v-if="element.imageData" class="image-preview">
-            <img :src="element.imageData" alt="预览" />
+            <img :src="element.imageData" :alt="element.imageName || '预览'" />
+            <div class="image-name" :title="element.imageName">{{ element.imageName || '未命名图片' }}</div>
+            <div v-if="element.imageWidth && element.imageHeight" class="image-size">
+              原始尺寸: {{ element.imageWidth }} × {{ element.imageHeight }} px
+            </div>
           </div>
+          <div v-else class="image-empty">尚未设置图片，请点击上方按钮选择</div>
+          <input ref="imageInputRef" type="file" accept="image/*" v-on="imageInputEvents" style="display: none" />
         </div>
 
         <!-- 条码属性 -->
@@ -193,9 +200,11 @@
 </template>
 
 <script setup>
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useCanvasStore } from '@/stores/canvas'
 import { ElMessage } from 'element-plus'
+import { resolveImageFile, ImageFileError } from '@/utils/image'
+import { useImagePicker } from '@/composables/useImagePicker'
 
 const barcodeFormats = [
   { value: 'CODE128', label: 'Code 128' },
@@ -252,14 +261,38 @@ const updateProp = (key) => {
   }
 }
 
-const handleImageUpload = (file) => {
-  const reader = new FileReader()
-  reader.onload = (e) => {
-    store.updateElement(element.value.id, { imageData: e.target.result })
-    ElMessage.success('图片已上传')
+const imageLoading = ref(false)
+
+const handleImagePick = async (file) => {
+  const target = element.value
+  if (!target) return
+  imageLoading.value = true
+  try {
+    const result = await resolveImageFile(file, target)
+    if (result.same) {
+      ElMessage.info(`「${result.name}」与当前图片是同一张文件，未做更换`)
+      return
+    }
+    store.updateElement(target.id, {
+      imageData: result.dataUrl,
+      imageName: result.name,
+      imageSize: result.size,
+      imageWidth: result.width,
+      imageHeight: result.height
+    })
+    ElMessage.success(`图片「${result.name}」已加载`)
+  } catch (err) {
+    if (err instanceof ImageFileError) {
+      ElMessage.error(err.message)
+    } else {
+      ElMessage.error('图片加载失败，请重试')
+    }
+  } finally {
+    imageLoading.value = false
   }
-  reader.readAsDataURL(file.raw)
 }
+
+const { inputRef: imageInputRef, triggerPick, inputEvents: imageInputEvents } = useImagePicker({ onPick: handleImagePick })
 
 const getCellText = (row, col) => {
   const cells = formData.cells
@@ -356,6 +389,16 @@ const remove = () => {
 .image-preview {
   margin-top: 8px; padding: 8px; background: #f5f7fa; border-radius: 4px;
   img { max-width: 100%; max-height: 100px; display: block; margin: 0 auto; }
+  .image-name {
+    margin-top: 6px; font-size: 12px; color: #303133; text-align: center;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .image-size { margin-top: 2px; font-size: 11px; color: #909399; text-align: center; }
+}
+
+.image-empty {
+  margin-top: 4px; font-size: 12px; color: #909399; text-align: center;
+  padding: 12px 8px; border: 1px dashed #dcdfe6; border-radius: 4px;
 }
 
 .align-buttons {
