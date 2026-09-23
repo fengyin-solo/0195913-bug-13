@@ -43,6 +43,7 @@ import TableElement from './elements/TableElement.vue'
 import JsBarcode from 'jsbarcode'
 import QRCode from 'qrcode'
 import { ElMessage } from 'element-plus'
+import { loadImage, containRect } from '@/utils/image'
 
 const store = useCanvasStore()
 const canvasRef = ref(null)
@@ -211,23 +212,25 @@ const handleDrop = (e) => {
 const renderCanvas = async () => {
   await nextTick()
   const canvas = canvasRef.value
-  if (!canvas) return
+  if (!canvas) return []
   const ctx = canvas.getContext('2d')
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
-  
+
+  const failedImages = []
   for (const el of store.elements) {
     if (!el.visible) continue
     ctx.save()
     ctx.translate(el.x + el.width / 2, el.y + el.height / 2)
     if (el.rotation) ctx.rotate((el.rotation * Math.PI) / 180)
     ctx.translate(-el.width / 2, -el.height / 2)
-    await renderElement(ctx, el)
+    await renderElement(ctx, el, failedImages)
     ctx.restore()
   }
+  return failedImages
 }
 
-const renderElement = async (ctx, el) => {
+const renderElement = async (ctx, el, failedImages) => {
   switch (el.type) {
     case 'text':
       ctx.fillStyle = el.color || '#000'
@@ -250,10 +253,20 @@ const renderElement = async (ctx, el) => {
       ctx.strokeStyle = el.strokeColor || '#000'; ctx.lineWidth = el.strokeWidth || 2; ctx.stroke()
       break
     case 'image':
-      if (el.imageData) {
-        const img = new Image(); img.src = el.imageData
-        await new Promise(r => { img.onload = r; img.onerror = r })
-        ctx.drawImage(img, 0, 0, el.width, el.height)
+      if (el.src) {
+        try {
+          const img = await loadImage(el.src)
+          // 与画布预览同一口径：按比例完整显示（contain），不拉伸变形
+          const rect = containRect(img.naturalWidth, img.naturalHeight, el.width, el.height)
+          ctx.drawImage(img, rect.x, rect.y, rect.width, rect.height)
+        } catch (err) {
+          // 加载失败不静默：记录名单向用户说明，并在导出图中标出占位
+          failedImages.push(el.imageName || '未命名图片')
+          ctx.strokeStyle = '#c0c4cc'
+          ctx.setLineDash([4, 4])
+          ctx.strokeRect(0.5, 0.5, el.width - 1, el.height - 1)
+          ctx.setLineDash([])
+        }
       }
       break
     case 'barcode':
@@ -356,17 +369,26 @@ const exportToBMP = (canvas, filename = 'label.bmp') => {
 }
 
 const exportCanvas = async (type) => {
-  await renderCanvas()
+  const failedImages = await renderCanvas()
   const canvas = canvasRef.value
-  if (type === 'bmp') {
-    exportToBMP(canvas, 'label.bmp')
-    ElMessage.success('BMP 导出成功')
+  try {
+    if (type === 'bmp') {
+      exportToBMP(canvas, 'label.bmp')
+    } else {
+      const link = document.createElement('a')
+      link.href = canvas.toDataURL('image/png')
+      link.download = 'label.png'
+      link.click()
+    }
+  } catch (err) {
+    console.error('导出失败:', err)
+    ElMessage.error('导出失败：图片数据异常，请检查图片元件后重试')
+    return
+  }
+  if (failedImages.length > 0) {
+    ElMessage.warning(`已导出，但 ${failedImages.length} 张图片加载失败（${failedImages.join('、')}），导出图中对应位置已用虚线框占位`)
   } else {
-    const link = document.createElement('a')
-    link.href = canvas.toDataURL('image/png')
-    link.download = 'label.png'
-    link.click()
-    ElMessage.success('PNG 导出成功')
+    ElMessage.success(type === 'bmp' ? 'BMP 导出成功' : 'PNG 导出成功')
   }
 }
 

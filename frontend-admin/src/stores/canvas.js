@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 const MM_TO_DOT = 8
+const STORAGE_KEY = 'label-editor:canvas-state'
 
 export const useCanvasStore = defineStore('canvas', () => {
   const canvasWidth = ref(80)
@@ -11,6 +12,52 @@ export const useCanvasStore = defineStore('canvas', () => {
   const selectedElementId = ref(null)
   const selectedElementIds = ref([])
   let elementIdCounter = 0
+
+  // 从本地存储恢复画布状态，保证重新进入页面后内容（含图片）保持一致
+  function restoreState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (!raw) return
+      const state = JSON.parse(raw)
+      if (typeof state.canvasWidth === 'number') canvasWidth.value = state.canvasWidth
+      if (typeof state.canvasHeight === 'number') canvasHeight.value = state.canvasHeight
+      if (Array.isArray(state.elements)) {
+        elements.value = state.elements
+        // 恢复 id 计数器，避免新增元件与已有元件 id 冲突
+        elementIdCounter = state.elements.reduce((max, el) => {
+          const match = /^element_(\d+)$/.exec(el.id || '')
+          return match ? Math.max(max, Number(match[1])) : max
+        }, 0)
+      }
+    } catch (err) {
+      console.warn('画布状态恢复失败:', err)
+    }
+  }
+
+  restoreState()
+
+  // 画布内容变化后自动保存（防抖），图片 dataURL 也随之一并持久化
+  let saveTimer = null
+  let persistWarned = false
+  watch([canvasWidth, canvasHeight, elements], () => {
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(async () => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          canvasWidth: canvasWidth.value,
+          canvasHeight: canvasHeight.value,
+          elements: elements.value
+        }))
+      } catch (err) {
+        console.warn('画布状态保存失败:', err)
+        if (!persistWarned) {
+          persistWarned = true
+          const { ElMessage } = await import('element-plus')
+          ElMessage.warning('画布内容（可能含大尺寸图片）超出本地存储上限，刷新页面后部分修改可能丢失')
+        }
+      }
+    }, 300)
+  }, { deep: true })
 
   const canvasPixelWidth = computed(() => canvasWidth.value * MM_TO_DOT)
   const canvasPixelHeight = computed(() => canvasHeight.value * MM_TO_DOT)

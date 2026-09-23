@@ -76,13 +76,21 @@
         <div v-if="element.type === 'image'" class="property-group">
           <div class="group-title">图片属性</div>
           <el-form-item label="图片">
-            <el-upload action="#" :auto-upload="false" :show-file-list="false" accept="image/*" @change="handleImageUpload">
-              <el-button type="primary" size="small">选择图片</el-button>
-            </el-upload>
+            <el-button type="primary" size="small" @click="triggerImagePick">选择图片</el-button>
+            <input
+              ref="imageInput"
+              type="file"
+              accept="image/*"
+              style="display: none"
+              @change="handleImageChange"
+              @cancel="notifyPickCancel"
+            />
           </el-form-item>
-          <div v-if="element.imageData" class="image-preview">
-            <img :src="element.imageData" alt="预览" />
+          <div v-if="element.src" class="image-preview">
+            <img :src="element.src" alt="预览" />
+            <div class="image-name" :title="element.imageName">{{ element.imageName || '未命名图片' }}</div>
           </div>
+          <div v-else class="image-empty">暂未选择图片</div>
         </div>
 
         <!-- 条码属性 -->
@@ -193,8 +201,9 @@
 </template>
 
 <script setup>
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useCanvasStore } from '@/stores/canvas'
+import { useImagePicker } from '@/composables/useImagePicker'
 import { ElMessage } from 'element-plus'
 
 const barcodeFormats = [
@@ -252,13 +261,16 @@ const updateProp = (key) => {
   }
 }
 
-const handleImageUpload = (file) => {
-  const reader = new FileReader()
-  reader.onload = (e) => {
-    store.updateElement(element.value.id, { imageData: e.target.result })
-    ElMessage.success('图片已上传')
-  }
-  reader.readAsDataURL(file.raw)
+const imageInput = ref(null)
+const { applyImageFile, notifyPickCancel } = useImagePicker()
+
+const triggerImagePick = () => imageInput.value?.click()
+
+const handleImageChange = (e) => {
+  const file = e.target.files[0]
+  // 重置输入值，重复选择同一文件时仍能触发 change，从而给出“图片相同”的提示
+  e.target.value = ''
+  if (file) applyImageFile(element.value, file)
 }
 
 const getCellText = (row, col) => {
@@ -356,7 +368,13 @@ const remove = () => {
 .image-preview {
   margin-top: 8px; padding: 8px; background: #f5f7fa; border-radius: 4px;
   img { max-width: 100%; max-height: 100px; display: block; margin: 0 auto; }
+  .image-name {
+    margin-top: 6px; font-size: 12px; color: #606266; text-align: center;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
 }
+
+.image-empty { margin-top: 8px; font-size: 12px; color: #909399; text-align: center; }
 
 .align-buttons {
   display: flex; gap: 8px; justify-content: center;
